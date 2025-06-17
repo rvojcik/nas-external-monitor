@@ -2,8 +2,11 @@
 
 M5GFX display;
 
-// M5Stack Core speaker pin
+// M5Stack Core pins
 #define SPEAKER_PIN 25
+#define BUTTON_A_PIN 39  // Button 1 (Back)
+#define BUTTON_B_PIN 38  // Button 2 (Middle) 
+#define BUTTON_C_PIN 37  // Button 3 (Next)
 
 // Modern color scheme
 #define BLACK     0x0000
@@ -22,6 +25,21 @@ M5GFX display;
 int _width = 320;
 int _height = 240;
 
+// Screen definitions
+enum Screen {
+  SCREEN_MAIN = 0,
+  SCREEN_NETWORK = 1,
+  SCREEN_STORAGE = 2,
+  SCREEN_COUNT = 3
+};
+
+struct PoolData {
+  String name;
+  String capacity;
+  String usage;
+  String state;
+};
+
 struct SystemData {
   float systemTemp;
   float hdd1Temp;
@@ -30,17 +48,30 @@ struct SystemData {
   float hdd4Temp;
   float hdd5Temp;
   String storageState;
+  String macAddress;
+  String ipv4Address;
+  String ipv6Address;
+  PoolData pools[4]; // Support up to 4 storage pools
+  int poolCount;
   unsigned long lastUpdate;
   bool hasError;
 };
 
-SystemData sysData = {0, 0, 0, 0, 0, 0, "Unknown", 0, false};
-SystemData lastDisplayData = {-1, -1, -1, -1, -1, -1, "", 0, false}; // Track last displayed values
+SystemData sysData = {0, 0, 0, 0, 0, 0, "Unknown", "", "", "", {}, 0, 0, false};
+SystemData lastDisplayData = {-1, -1, -1, -1, -1, -1, "", "", "", "", {}, 0, 0, false};
 const unsigned long UPDATE_TIMEOUT = 60000;
 const float TEMP_THRESHOLD = 52.0;
 bool forceRedraw = true;
 bool lastHighTempState = false;
 bool lastStorageProblemState = false;
+
+// Navigation variables
+Screen currentScreen = SCREEN_MAIN;
+Screen lastScreen = SCREEN_MAIN;
+bool buttonAPressed = false;
+bool buttonCPressed = false;
+unsigned long lastButtonPress = 0;
+const unsigned long BUTTON_DEBOUNCE = 200;
 
 void initDisplay() {
   display.begin();
@@ -48,6 +79,11 @@ void initDisplay() {
   display.fillScreen(BLACK);
   display.setTextColor(WHITE);
   display.setFont(&fonts::Font2); // Use built-in font
+  
+  // Initialize buttons
+  pinMode(BUTTON_A_PIN, INPUT_PULLUP);
+  pinMode(BUTTON_B_PIN, INPUT_PULLUP);
+  pinMode(BUTTON_C_PIN, INPUT_PULLUP);
 }
 
 void fillScreen(uint16_t color) {
@@ -97,6 +133,37 @@ void alertBeep() {
   beep(1000, 200);
 }
 
+void handleButtons() {
+  unsigned long currentTime = millis();
+  
+  // Debounce protection
+  if (currentTime - lastButtonPress < BUTTON_DEBOUNCE) {
+    return;
+  }
+  
+  // Button A (Back) - Previous screen
+  if (digitalRead(BUTTON_A_PIN) == LOW && !buttonAPressed) {
+    buttonAPressed = true;
+    lastButtonPress = currentTime;
+    currentScreen = (Screen)((currentScreen - 1 + SCREEN_COUNT) % SCREEN_COUNT);
+    forceRedraw = true;
+    Serial.println("Button A pressed - Previous screen");
+  } else if (digitalRead(BUTTON_A_PIN) == HIGH) {
+    buttonAPressed = false;
+  }
+  
+  // Button C (Next) - Next screen
+  if (digitalRead(BUTTON_C_PIN) == LOW && !buttonCPressed) {
+    buttonCPressed = true;
+    lastButtonPress = currentTime;
+    currentScreen = (Screen)((currentScreen + 1) % SCREEN_COUNT);
+    forceRedraw = true;
+    Serial.println("Button C pressed - Next screen");
+  } else if (digitalRead(BUTTON_C_PIN) == HIGH) {
+    buttonCPressed = false;
+  }
+}
+
 void setup() {
   Serial.begin(115200);
   delay(2000);
@@ -112,13 +179,26 @@ void setup() {
   
   Serial.println("Drawing interface...");
   drawHeader();
-  displaySystemInfo();
+  displayCurrentScreen();
   
   sysData.lastUpdate = millis();
-  Serial.println("System ready!");
-  Serial.println("Waiting for UPDATE commands...");
-  Serial.println("Format: UPDATE:sys_temp,hdd1,hdd2,hdd3,hdd4,hdd5,storage_state");
-  Serial.println("Example: UPDATE:45.2,38.1,42.5,39.8,41.2,43.6,Healthy");
+  Serial.println("System ready with multi-screen navigation!");
+  Serial.println("Button 1 (A): Previous screen | Button 3 (C): Next screen");
+  Serial.println("");
+  Serial.println("=== SERIAL COMMANDS ===");
+  Serial.println("1. Temperature data:");
+  Serial.println("   UPDATE:sys_temp,hdd1,hdd2,hdd3,hdd4,hdd5,storage_state");
+  Serial.println("   Example: UPDATE:45.2,38.1,42.5,39.8,41.2,43.6,Healthy");
+  Serial.println("");
+  Serial.println("2. Network information:");
+  Serial.println("   NETWORK:mac_address,ipv4_address,ipv6_address");
+  Serial.println("   Example: NETWORK:aa:bb:cc:dd:ee:ff,192.168.1.100,2001:db8::1");
+  Serial.println("");
+  Serial.println("3. Storage pools:");
+  Serial.println("   POOL:RESET (clears all pools)");
+  Serial.println("   POOL:name,capacity,usage,state");
+  Serial.println("   Example: POOL:tank1,2TB,65%,Healthy");
+  Serial.println("            POOL:backup,1TB,80%,Degraded");
 }
 
 void loop() {
@@ -147,9 +227,10 @@ void loop() {
     sysData.hasError = false;
   }
   
-  displaySystemInfo();
+  handleButtons();
+  displayCurrentScreen();
   
-  delay(5000);
+  delay(100); // Reduced for better button responsiveness
 }
 
 void drawHeader() {
@@ -157,17 +238,34 @@ void drawHeader() {
   fillRect(0, 0, 320, 28, DARK_BLUE);
   fillRect(0, 28, 320, 2, BLUE);
   
-  // Title with medium font (20% smaller than large)
-  drawStringMedium(10, 6, "NAS MONITOR", WHITE);
+  // Title with screen indicator
+  String headerTitle = "NAS MONITOR";
+  switch(currentScreen) {
+    case SCREEN_MAIN:
+      break;
+    case SCREEN_NETWORK:
+      headerTitle = "Network";
+      break;
+    case SCREEN_STORAGE:
+      headerTitle = "Storage detail";
+      break;
+  }
+  
+  drawStringMedium(10, 6, headerTitle, WHITE);
   
   // Status indicator dot
   fillRect(280, 8, 8, 8, GREEN);
   
-  Serial.println("M5GFX header with medium-sized title");
+  // Navigation indicators
+  drawString(5, 6, "<", WHITE);   // Back button
+  drawString(305, 6, ">", WHITE); // Next button
+  
+  Serial.println("M5GFX header with screen: " + String(currentScreen));
 }
 
 bool needsRedraw() {
   return forceRedraw || 
+         currentScreen != lastScreen ||
          sysData.systemTemp != lastDisplayData.systemTemp ||
          sysData.hdd1Temp != lastDisplayData.hdd1Temp ||
          sysData.hdd2Temp != lastDisplayData.hdd2Temp ||
@@ -175,7 +273,97 @@ bool needsRedraw() {
          sysData.hdd4Temp != lastDisplayData.hdd4Temp ||
          sysData.hdd5Temp != lastDisplayData.hdd5Temp ||
          sysData.storageState != lastDisplayData.storageState ||
+         sysData.macAddress != lastDisplayData.macAddress ||
+         sysData.ipv4Address != lastDisplayData.ipv4Address ||
+         sysData.ipv6Address != lastDisplayData.ipv6Address ||
+         sysData.poolCount != lastDisplayData.poolCount ||
          sysData.hasError != lastDisplayData.hasError;
+}
+
+void displayNetworkScreen() {
+  // Clear main area
+  fillRect(0, 30, 320, 210, BLACK);
+  
+  int yPos = 40;
+  int rowHeight = 45;
+  
+  // MAC Address
+  drawStringMedium(10, yPos, "MAC ADDRESS:", LIGHT_GREY);
+  drawStringMedium(10, yPos + 25, sysData.macAddress, WHITE);
+  yPos += rowHeight + 10;
+  
+  // IPv4 Address
+  drawStringMedium(10, yPos, "IPv4 ADDRESS:", LIGHT_GREY);
+  drawStringMedium(10, yPos + 25, sysData.ipv4Address, GREEN);
+  yPos += rowHeight + 10;
+  
+  // IPv6 Address
+  drawStringMedium(10, yPos, "IPv6 ADDRESS:", LIGHT_GREY);
+  // Split long IPv6 address if needed
+  String ipv6 = sysData.ipv6Address;
+  if (ipv6.length() > 25) {
+    String line1 = ipv6.substring(0, 25);
+    String line2 = ipv6.substring(25);
+    drawStringMedium(10, yPos + 25, line1, BLUE);
+    drawStringMedium(10, yPos + 40, line2, BLUE);
+  } else {
+    drawStringMedium(10, yPos + 25, ipv6, BLUE);
+  }
+  
+  // Navigation hint
+  drawString(10, 220, "Button 1: Back  |  Button 3: Next", GREY);
+}
+
+void displayStorageScreen() {
+  // Clear main area
+  fillRect(0, 30, 320, 210, BLACK);
+  
+  int yPos = 40;
+   
+  // Draw table header
+  fillRect(5, yPos, 310, 2, GREY);
+  yPos += 5;
+  
+  drawString(10, yPos, "NAME", LIGHT_GREY);
+  drawString(80, yPos, "CAPACITY", LIGHT_GREY);
+  drawString(160, yPos, "USED", LIGHT_GREY);
+  drawString(220, yPos, "STATE", LIGHT_GREY);
+  yPos += 15;
+  
+  fillRect(5, yPos, 310, 1, GREY);
+  yPos += 5;
+  
+  // Display pools
+  for (int i = 0; i < sysData.poolCount && i < 4; i++) {
+    // Pool name
+    drawString(10, yPos, sysData.pools[i].name, WHITE);
+    
+    // Capacity
+    drawString(80, yPos, sysData.pools[i].capacity, WHITE);
+    
+    // Usage
+    drawString(160, yPos, sysData.pools[i].usage, ORANGE);
+    
+    // State
+    uint16_t stateColor = (sysData.pools[i].state == "Healthy") ? GREEN : RED;
+    drawString(220, yPos, sysData.pools[i].state, stateColor);
+    
+    yPos += 18;
+    
+    // Separator line
+    if (i < sysData.poolCount - 1) {
+      fillRect(5, yPos, 310, 1, DARK_GREY);
+      yPos += 3;
+    }
+  }
+  
+  // If no pools
+  if (sysData.poolCount == 0) {
+    drawStringMedium(10, yPos + 20, "NO STORAGE POOLS", GREY);
+  }
+  
+  // Navigation hint
+  drawString(10, 220, "Button 1: Back  |  Button 3: Next", GREY);
 }
 
 void drawTempRow(int y, String label, float temp, uint16_t bgColor) {
@@ -218,10 +406,36 @@ void drawTempRow(int y, String label, float temp, uint16_t bgColor) {
   drawStringMedium(245, y + 6, tempStr, textColor);
 }
 
-void displaySystemInfo() {
+void displayCurrentScreen() {
   if (!needsRedraw()) {
     return;
   }
+  
+  // Always draw header
+  drawHeader();
+  
+  // Display content based on current screen
+  switch(currentScreen) {
+    case SCREEN_MAIN:
+      displayMainScreen();
+      break;
+    case SCREEN_NETWORK:
+      displayNetworkScreen();
+      break;
+    case SCREEN_STORAGE:
+      displayStorageScreen();
+      break;
+  }
+  
+  // Update status indicator
+  fillRect(280, 8, 8, 8, sysData.hasError ? RED : GREEN);
+  
+  lastDisplayData = sysData;
+  lastScreen = currentScreen;
+  forceRedraw = false;
+}
+
+void displayMainScreen() {
   
   uint16_t bgColor = BLACK;
   bool highTemp = (sysData.systemTemp > TEMP_THRESHOLD || 
@@ -312,13 +526,7 @@ void displaySystemInfo() {
     drawString(10, 225, "NO DATA UPDATE", WHITE);
   }
   
-  // Update header status indicator
-  fillRect(280, 8, 8, 8, sysData.hasError ? RED : (bgColor == RED ? ORANGE : GREEN));
-  
-  lastDisplayData = sysData;
-  forceRedraw = false;
-  
-  Serial.println("Modern display updated with labeled temperature readings");
+  Serial.println("Main screen updated with temperature readings");
 }
 
 void checkSerialData() {
@@ -336,12 +544,18 @@ void checkSerialData() {
       sysData.hasError = false;
       forceRedraw = true; // Trigger display update
       Serial.println("Update processed successfully!");
-      Serial.printf("System: %.1f°C, HDD1: %.1f°C, HDD2: %.1f°C, HDD3: %.1f°C, HDD4: %.1f°C, HDD5: %.1f°C, Storage: %s\n",
-                    sysData.systemTemp, sysData.hdd1Temp, sysData.hdd2Temp, 
-                    sysData.hdd3Temp, sysData.hdd4Temp, sysData.hdd5Temp, 
-                    sysData.storageState.c_str());
+    } else if (command.startsWith("NETWORK:")) {
+      Serial.println("Processing NETWORK command...");
+      parseNetwork(command);
+      forceRedraw = true;
+      Serial.println("Network data updated!");
+    } else if (command.startsWith("POOL:")) {
+      Serial.println("Processing POOL command...");
+      parsePool(command);
+      forceRedraw = true;
+      Serial.println("Pool data updated!");
     } else {
-      Serial.println("Unknown command - expecting UPDATE:...");
+      Serial.println("Unknown command. Supported: UPDATE:, NETWORK:, POOL:");
     }
   }
 }
@@ -377,5 +591,81 @@ void parseUpdate(String command) {
     
     lastIndex = commaIndex + 1;
     fieldIndex++;
+  }
+}
+
+void parseNetwork(String command) {
+  // Format: NETWORK:mac_address,ipv4_address,ipv6_address
+  command.replace("NETWORK:", "");
+  
+  int commaIndex = 0;
+  int lastIndex = 0;
+  int fieldIndex = 0;
+  
+  while (commaIndex != -1 && fieldIndex < 3) {
+    commaIndex = command.indexOf(',', lastIndex);
+    String value;
+    
+    if (commaIndex != -1) {
+      value = command.substring(lastIndex, commaIndex);
+    } else {
+      value = command.substring(lastIndex);
+    }
+    
+    value.trim();
+    
+    switch (fieldIndex) {
+      case 0: sysData.macAddress = value; break;
+      case 1: sysData.ipv4Address = value; break;
+      case 2: sysData.ipv6Address = value; break;
+    }
+    
+    lastIndex = commaIndex + 1;
+    fieldIndex++;
+  }
+}
+
+void parsePool(String command) {
+  // Format: POOL:name,capacity,usage,state
+  command.replace("POOL:", "");
+  
+  // Check if this is a reset command
+  if (command == "RESET") {
+    sysData.poolCount = 0;
+    return;
+  }
+  
+  int commaIndex = 0;
+  int lastIndex = 0;
+  int fieldIndex = 0;
+  
+  if (sysData.poolCount < 4) {
+    PoolData newPool;
+    
+    while (commaIndex != -1 && fieldIndex < 4) {
+      commaIndex = command.indexOf(',', lastIndex);
+      String value;
+      
+      if (commaIndex != -1) {
+        value = command.substring(lastIndex, commaIndex);
+      } else {
+        value = command.substring(lastIndex);
+      }
+      
+      value.trim();
+      
+      switch (fieldIndex) {
+        case 0: newPool.name = value; break;
+        case 1: newPool.capacity = value; break;
+        case 2: newPool.usage = value; break;
+        case 3: newPool.state = value; break;
+      }
+      
+      lastIndex = commaIndex + 1;
+      fieldIndex++;
+    }
+    
+    sysData.pools[sysData.poolCount] = newPool;
+    sysData.poolCount++;
   }
 }

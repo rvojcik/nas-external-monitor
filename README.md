@@ -20,6 +20,8 @@ Advanced Arduino sketch for M5Stack Core featuring high-performance NAS temperat
 - **Real-time value updates** with temperature bars
 
 ### 🔧 Technical Features
+- **Multi-screen navigation** with 3 dedicated screens (Main, Network, Storage)
+- **Physical button controls** - Button 1 (Back), Button 3 (Next)
 - **Serial command interface** for real-time data updates
 - **Efficient redraw system** - only updates when data changes
 - **Robust error handling** with visual and audio feedback
@@ -31,6 +33,7 @@ Advanced Arduino sketch for M5Stack Core featuring high-performance NAS temperat
 - **M5Stack Core** (ESP32-based development board)
 - **Built-in 320x240 TFT display**
 - **Built-in speaker** for audio alerts
+- **3 physical buttons** for navigation (Button 1, 2, 3)
 - **USB connection** for serial communication and programming
 
 ## 📦 Installation
@@ -48,31 +51,89 @@ Advanced Arduino sketch for M5Stack Core featuring high-performance NAS temperat
 5. Upload sketch to your M5Stack Core
 6. Open Serial Monitor at **115200 baud**
 
+## 🎮 Navigation Controls
+
+### Physical Buttons
+- **Button 1** (Left): Navigate to previous screen
+- **Button 2** (Middle): Currently unused (reserved for future features)
+- **Button 3** (Right): Navigate to next screen
+
+### Available Screens
+
+#### 1. 🏠 Main Screen (MAIN)
+- Real-time temperature monitoring with visual bars
+- System and 5 HDD temperature displays
+- Storage health status
+- Color-coded alerts and audio feedback
+
+#### 2. 🌐 Network Screen (NETWORK)  
+- MAC address display
+- IPv4 address information
+- IPv6 address information
+- Network connectivity status
+
+#### 3. 💾 Storage Screen (STORAGE)
+- Storage pool table with aligned columns
+- Pool name, capacity, usage, and state
+- Support for up to 4 storage pools
+- Color-coded pool health status
+
 ## 📡 Serial Communication Protocol
 
-### Command Format
-Send temperature updates via serial port using this format:
-
-```
+### 1. Temperature Data Updates
+```bash
 UPDATE:system_temp,hdd1_temp,hdd2_temp,hdd3_temp,hdd4_temp,hdd5_temp,storage_state
 ```
 
-### Example Commands
+**Example Commands:**
 ```bash
 # Normal operation - all temperatures safe
 UPDATE:45.2,38.1,42.5,39.8,41.2,43.6,Healthy
 
-# High temperature alert - system overheating
+# High temperature alert - system overheating  
 UPDATE:55.1,48.3,52.8,46.7,49.2,51.4,Problem
+```
 
-# Mixed conditions - some HDDs warm but acceptable
-UPDATE:42.8,35.9,48.4,37.2,36.8,39.1,Healthy
+### 2. Network Information Updates
+```bash
+NETWORK:mac_address,ipv4_address,ipv6_address
+```
+
+**Example Commands:**
+```bash
+# Complete network configuration
+NETWORK:aa:bb:cc:dd:ee:ff,192.168.1.100,2001:db8::1
+
+# IPv4 only setup
+NETWORK:12:34:56:78:9a:bc,10.0.0.50,
+```
+
+### 3. Storage Pool Updates  
+```bash
+POOL:RESET                    # Clear all existing pools
+POOL:name,capacity,usage,state # Add/update a storage pool
+```
+
+**Example Commands:**
+```bash
+# Reset pools and add new ones
+POOL:RESET
+POOL:tank1,2TB,65%,Healthy
+POOL:backup,1TB,80%,Degraded
+POOL:archive,4TB,45%,Healthy
+
+# Single pool update
+POOL:main-pool,8TB,72%,Healthy
 ```
 
 ### Parameters
-- **system_temp**: Main system temperature (°C)
-- **hdd1_temp** to **hdd5_temp**: Individual HDD temperatures (°C)
-- **storage_state**: Either `Healthy` or `Problem`
+- **Temperatures**: Floating point values in Celsius (°C)
+- **Storage state**: Either `Healthy` or `Problem`
+- **MAC address**: Standard format (aa:bb:cc:dd:ee:ff)
+- **IP addresses**: Standard IPv4/IPv6 format
+- **Pool capacity**: Human readable (TB, GB, etc.)
+- **Pool usage**: Percentage format (45%, 80%, etc.)
+- **Pool state**: `Healthy`, `Degraded`, `Failed`, etc.
 
 ## 🎯 Display Behavior
 
@@ -129,11 +190,12 @@ The layout automatically scales to fill the 320x240 display:
 - **Command parsing**: Robust with error handling
 - **Debug output**: Comprehensive logging via Serial Monitor
 
-## 📋 Display Layout Example
+## 📋 Display Layout Examples
 
+### Main Screen (Temperature Monitoring)
 ```
 ┌─────────────────────────────────────────────────────────┐
-│  🔷 NAS MONITOR                                    🟢   │ ← Header (30px)
+│ < 🔷 NAS MONITOR - MAIN                          🟢  > │ ← Header (30px)
 ├─────────────────────────────────────────────────────────┤
 │  SYSTEM:  ████████████░░░░░░░░░░░░░░░░░░  45.2 C       │ ← Temp rows
 │  HDD1:    ██████████░░░░░░░░░░░░░░░░░░░░  38.1 C       │   (26px each)
@@ -143,6 +205,45 @@ The layout automatically scales to fill the 320x240 display:
 │  HDD5:    ██████████████████░░░░░░░░░░░░  43.6 C       │
 │                                                         │
 │  STORAGE: HEALTHY                                       │ ← Storage (28px)
+│  Button 1: Back  |  Button 3: Next                     │ ← Navigation
+└─────────────────────────────────────────────────────────┘
+```
+
+### Network Screen (Network Information)
+```
+┌─────────────────────────────────────────────────────────┐
+│ < 🔷 NAS MONITOR - NETWORK                       🟢  > │ ← Header (30px)
+├─────────────────────────────────────────────────────────┤
+│  MAC ADDRESS:                                           │
+│  aa:bb:cc:dd:ee:ff                                      │
+│                                                         │
+│  IPv4 ADDRESS:                                          │
+│  192.168.1.100                                          │
+│                                                         │
+│  IPv6 ADDRESS:                                          │
+│  2001:db8:85a3::8a2e:370:7334                          │
+│                                                         │
+│                                                         │
+│  Button 1: Back  |  Button 3: Next                     │ ← Navigation
+└─────────────────────────────────────────────────────────┘
+```
+
+### Storage Screen (Pool Management)
+```
+┌─────────────────────────────────────────────────────────┐
+│ < 🔷 NAS MONITOR - STORAGE                       🟢  > │ ← Header (30px)
+├─────────────────────────────────────────────────────────┤
+│  STORAGE POOLS                                          │
+│  ═══════════════════════════════════════════════════   │
+│  NAME      CAPACITY    USED      STATE                  │ ← Table header
+│  ───────────────────────────────────────────────────   │
+│  tank1     2TB         65%       Healthy               │ ← Pool entries
+│  backup    1TB         80%       Degraded              │
+│  archive   4TB         45%       Healthy               │
+│  cache     500GB       92%       Healthy               │
+│                                                         │
+│                                                         │
+│  Button 1: Back  |  Button 3: Next                     │ ← Navigation
 └─────────────────────────────────────────────────────────┘
 ```
 
