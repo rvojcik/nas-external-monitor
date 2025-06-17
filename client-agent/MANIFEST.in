@@ -1,0 +1,7 @@
+include README.md
+include LICENSE
+recursive-include config *.conf
+recursive-include systemd *.service
+recursive-include tests *.py
+global-exclude *.pyc
+global-exclude __pycache__

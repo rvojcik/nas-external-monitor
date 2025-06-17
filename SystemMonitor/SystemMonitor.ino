@@ -126,11 +126,11 @@ void beep(int frequency, int duration) {
 
 void alertBeep() {
   // Triple beep pattern for alerts
-  beep(1000, 200);
-  delay(100);
-  beep(1000, 200);
-  delay(100);
-  beep(1000, 200);
+  //beep(1000, 200);
+  //delay(100);
+  //beep(1000, 200);
+  //delay(100);
+  //beep(1000, 200);
 }
 
 void handleButtons() {
